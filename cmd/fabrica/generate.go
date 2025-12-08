@@ -92,16 +92,9 @@ Examples:
 
 			fmt.Printf("📦 Found %d resource(s): %s\n", len(resources), strings.Join(resources, ", "))
 
-			// Check if registration file exists or needs regenerating
-			regFile := "pkg/resources/register_generated.go"
-			needsRegistration := false
-			if _, err := os.Stat(regFile); os.IsNotExist(err) {
-				needsRegistration = true
-			}
-
 			// Check version compatibility before regenerating (only if generated code exists)
-			// Skip version check for fresh projects (where registration file doesn't exist)
-			if !needsRegistration {
+			regFile := "pkg/resources/register_generated.go"
+			if _, err := os.Stat(regFile); err == nil {
 				generatedVersion := detectGeneratedVersion()
 				if generatedVersion != "" && debug {
 					fmt.Printf("🔍 Detected generated code version: %s\n", generatedVersion)
@@ -116,16 +109,12 @@ Examples:
 				}
 			}
 
-			// Auto-generate registration file if missing
-			if needsRegistration {
-				fmt.Println()
-				fmt.Println("📝 Registration file not found, creating it...")
-				if err := generateRegistrationFile(debug); err != nil {
-					return fmt.Errorf("failed to generate registration file: %w", err)
-				}
-				fmt.Println()
-			} else if debug {
-				fmt.Printf("📝 Registration file exists: %s\n", regFile)
+			// Always regenerate registration file to ensure all resources are included
+			if debug {
+				fmt.Println("📝 Updating registration file...")
+			}
+			if err := generateRegistrationFile(debug); err != nil {
+				return fmt.Errorf("failed to generate registration file: %w", err)
 			}
 
 			// Note: We don't run go mod tidy here because:
