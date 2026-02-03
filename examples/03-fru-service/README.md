@@ -10,6 +10,8 @@ SPDX-License-Identifier: MIT
 **Difficulty:** Advanced
 **Prerequisites:** Go 1.23+, fabrica CLI installed, SQLite3
 
+> **About This Example:** This directory contains reference code that demonstrates Fabrica's Ent storage features. The `pkg/` directory includes example implementations marked with `//go:build ignore` to prevent them from being compiled as part of the Fabrica repository. When following this guide, you'll generate your own project with Fabrica, and these files serve as documentation and reference.
+
 ## What You'll Build
 
 A Field Replaceable Unit (FRU) inventory service with:
@@ -54,14 +56,17 @@ cd fru-service
 **What gets created:**
 ```
 fru-service/
-├── .fabrica.yaml                    # Configuration with ent storage + auth
+├── .fabrica.yaml                    # Configuration with ent storage
+├── apis.yaml                        # API group and version configuration
 ├── cmd/
 │   └── server/
 │       └── main.go                  # Server with Ent setup
 ├── internal/
 │   └── storage/
 │       └── ent/                     # Ent schema directory
-└── pkg/resources/                   # Empty (for FRU resource)
+└── apis/
+    └── example.fabrica.dev/
+        └── v1/                      # Resource definitions
 ```
 
 ### Step 2: Add the FRU Resource
@@ -70,15 +75,9 @@ fru-service/
 fabrica add resource FRU
 ```
 
-### Step 3: Copy the FRU Resource Definition
+### Step 3: Define the FRU Resource
 
-Copy the FRU resource from the example:
-
-```bash
-cp -r ../../fabrica/examples/03-fru-service/pkg/resources/fru pkg/resources/
-```
-
-Or create your own `pkg/resources/fru/fru.go` with this structure:
+Edit the generated resource file `apis/example.fabrica.dev/v1/fru_types.go` with this structure:
 
 ```go
 // FRUSpec defines the desired state of FRU
@@ -126,11 +125,16 @@ type FRUStatus struct {
     Temperature float64              `json:"temperature,omitempty"`
     Power       float64              `json:"power,omitempty"`
     Metrics     map[string]float64   `json:"metrics,omitempty"`
-    Conditions  []resource.Condition `json:"conditions,omitempty"`
+    Conditions  []fabrica.Condition `json:"conditions,omitempty"`
 }
 ```
 
 The FRU resource tracks hardware inventory with detailed location and status information.
+
+> **Note:** The `fabrica.Condition` type is imported from `github.com/openchami/fabrica/pkg/fabrica`. Add this import at the top of your file:
+> ```go
+> import "github.com/openchami/fabrica/pkg/fabrica"
+> ```
 
 
 ### Step 4: Generate All Code
@@ -218,19 +222,21 @@ go build -o fru-cli ./cmd/client
 ```bash
 # Create an FRU using the generated CLI client with --spec flag
 ./fru-cli fru create --spec '{
-  "name": "cpu-001",
-  "fruType": "CPU",
-  "serialNumber": "CPU12345",
-  "partNumber": "XEON-5678",
-  "manufacturer": "Intel",
-  "model": "Xeon Gold 6248R",
-  "location": {
-    "rack": "R42",
-    "chassis": "C1",
-    "slot": "U10",
-    "socket": "CPU0"
-  },
-  "redfishPath": "/redfish/v1/Systems/node-001/Processors/CPU0"
+  "metadata": {"name": "cpu-001"},
+  "spec": {
+    "fruType": "CPU",
+    "serialNumber": "CPU12345",
+    "partNumber": "XEON-5678",
+    "manufacturer": "Intel",
+    "model": "Xeon Gold 6248R",
+    "location": {
+      "rack": "R42",
+      "chassis": "C1",
+      "slot": "U10",
+      "socket": "CPU0"
+    },
+    "redfishPath": "/redfish/v1/Systems/node-001/Processors/CPU0"
+  }
 }'
 ```
 
@@ -240,19 +246,21 @@ Alternatively, create from a JSON file:
 # Create fru-cpu.json file
 cat > fru-cpu.json <<EOF
 {
-  "name": "cpu-001",
-  "fruType": "CPU",
-  "serialNumber": "CPU12345",
-  "partNumber": "XEON-5678",
-  "manufacturer": "Intel",
-  "model": "Xeon Gold 6248R",
-  "location": {
-    "rack": "R42",
-    "chassis": "C1",
-    "slot": "U10",
-    "socket": "CPU0"
-  },
-  "redfishPath": "/redfish/v1/Systems/node-001/Processors/CPU0"
+  "metadata": {"name": "cpu-001"},
+  "spec": {
+    "fruType": "CPU",
+    "serialNumber": "CPU12345",
+    "partNumber": "XEON-5678",
+    "manufacturer": "Intel",
+    "model": "Xeon Gold 6248R",
+    "location": {
+      "rack": "R42",
+      "chassis": "C1",
+      "slot": "U10",
+      "socket": "CPU0"
+    },
+    "redfishPath": "/redfish/v1/Systems/node-001/Processors/CPU0"
+  }
 }
 EOF
 
@@ -519,9 +527,18 @@ sqlite3 fru.db ".restore fru-backup.db"
 ### Issue: "sqlite: foreign_keys pragma is off: missing '_fk=1' in the connection string"
 
 **Cause:** SQLite foreign keys are not enabled in the database connection
-**Fix:** Use the correct database URL format with foreign keys enabled:
+
+**Note:** This issue is fixed in Fabrica v0.3.2+. The generated default configuration now includes `_fk=1` automatically.
+
+**Fix for older projects:** Update the database URL to include foreign keys:
 ```bash
 ./fru-server serve --database-url "file:data/fru.db?_fk=1"
+```
+
+Or update your `.fabrica.yaml` or environment variable:
+```yaml
+# In DefaultConfig() in cmd/server/main.go
+DatabaseURL: "file:./data.db?cache=shared&_fk=1"
 ```
 
 ### Issue: "failed to open database: unable to open database file"

@@ -10,6 +10,8 @@ SPDX-License-Identifier: MIT
 **Difficulty:** Advanced
 **Prerequisites:** Go 1.23+, fabrica CLI installed, understanding of reconciliation patterns
 
+> **About This Example:** This directory contains reference code that demonstrates Fabrica's reconciliation features. The `pkg/` directory includes example implementations marked with `//go:build ignore` to prevent them from being compiled as part of the Fabrica repository. When following this guide, you'll generate your own project and can optionally copy the example implementations (removing the build constraint as shown in the instructions).
+
 ## What You'll Build
 
 A data center rack inventory system that demonstrates **event-driven reconciliation**:
@@ -77,11 +79,13 @@ cd rack-inventory
 ```
 rack-inventory/
 ├── .fabrica.yaml                    # Configuration with reconciliation enabled
+├── apis.yaml                        # API group/version configuration
 ├── cmd/
 │   └── server/
 │       └── main.go                  # Server with controller setup (commented)
-├── pkg/
-│   └── resources/                   # Empty (for resources)
+├── apis/
+│   └── example.fabrica.dev/
+│       └── v1/                      # Resource definitions
 └── internal/
     └── storage/
 ```
@@ -124,14 +128,15 @@ Copy the resource definitions from this example directory to your project:
 
 ```bash
 # From the fabrica repository
-cp -r ../examples/04-rack-reconciliation/pkg/resources/* pkg/resources/
+FABRICA_REPO=/path/to/fabrica
+cp -r "$FABRICA_REPO/examples/04-rack-reconciliation/apis/example.fabrica.dev/v1/." apis/example.fabrica.dev/v1/
 ```
 
 Or create each resource file manually following the structures below.
 
 #### RackTemplate Resource
 
-[pkg/resources/racktemplate/racktemplate.go](pkg/resources/racktemplate/racktemplate.go)
+`apis/example.fabrica.dev/v1/racktemplate_types.go`
 
 Defines the configuration template for a rack:
 - `ChassisCount` - Number of chassis in the rack
@@ -141,7 +146,7 @@ Defines the configuration template for a rack:
 
 #### Rack Resource
 
-[pkg/resources/rack/rack.go](pkg/resources/rack/rack.go)
+`apis/example.fabrica.dev/v1/rack_types.go`
 
 Represents a physical rack that references a RackTemplate:
 - `Spec.TemplateUID` - References which template to use
@@ -152,10 +157,10 @@ Represents a physical rack that references a RackTemplate:
 
 #### Child Resources
 
-- **Chassis** [pkg/resources/chassis/chassis.go](pkg/resources/chassis/chassis.go) - Contains blades
-- **Blade** [pkg/resources/blade/blade.go](pkg/resources/blade/blade.go) - Contains nodes and BMCs
-- **BMC** [pkg/resources/bmc/bmc.go](pkg/resources/bmc/bmc.go) - Management controller
-- **Node** [pkg/resources/node/node.go](pkg/resources/node/node.go) - Compute node
+- **Chassis** `apis/example.fabrica.dev/v1/chassis_types.go` - Contains blades
+- **Blade** `apis/example.fabrica.dev/v1/blade_types.go` - Contains nodes and BMCs
+- **BMC** `apis/example.fabrica.dev/v1/bmc_types.go` - Management controller
+- **Node** `apis/example.fabrica.dev/v1/node_types.go` - Compute node
 
 ### Step 4: Generate All Code (Including Reconcilers!)
 
@@ -257,9 +262,17 @@ func (r *RackReconciler) reconcileRack(ctx context.Context, res *rack.Rack) erro
 **You can copy the example implementation:**
 ```bash
 # Copy the complete rack reconciler implementation
-cp ../examples/04-rack-reconciliation/pkg/reconcilers/rack_reconciler.go \
+# Note: Remove the first line (//go:build ignore) from the copied file
+FABRICA_REPO=/path/to/fabrica
+cp "$FABRICA_REPO/examples/04-rack-reconciliation/pkg/reconcilers/rack_reconciler.go" \
    pkg/reconcilers/rack_reconciler.go
+
+# Remove the build constraint (only needed in example repo)
+sed -i.bak '1{/^\/\/go:build ignore$/d;}' pkg/reconcilers/rack_reconciler.go
+rm pkg/reconcilers/rack_reconciler.go.bak 2>/dev/null || true
 ```
+
+> **Note:** The example file includes `//go:build ignore` at the top to prevent it from being built as part of the Fabrica repository. This line should be removed when copying to your project (the `sed` command above handles this automatically).
 
 This example file shows a complete production-ready implementation with:
 - Template-based resource provisioning
@@ -316,15 +329,16 @@ Expected output:
 curl -X POST http://localhost:8080/racktemplates \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "standard-rack",
-    "chassisCount": 2,
-    "chassisConfig": {
-    "bladeCount": 4,
-    "bladeConfig": {
-      "nodeCount": 2,
-      "bmcMode": "shared"
-      }
-    },
+    "metadata": {"name": "standard-rack"},
+    "spec": {
+      "chassisCount": 2,
+      "chassisConfig": {
+        "bladeCount": 4,
+        "bladeConfig": {
+          "nodeCount": 2,
+          "bmcMode": "shared"
+        }
+      },
       "description": "Standard 2-chassis rack with 4 blades per chassis"
     }
   }'
@@ -339,12 +353,13 @@ Save the UID from the response (e.g., `rktmpl-abc123`).
 curl -X POST http://localhost:8080/racks \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "rack-01",
-    "templateUID": "rktmpl-abc123",
-    "location": "datacenter-1",
-    "datacenter": "DC1",
-    "row": "A",
-    "position": "01"
+    "metadata": {"name": "rack-01"},
+    "spec": {
+      "templateUID": "rktmpl-abc123",
+      "location": "datacenter-1",
+      "datacenter": "DC1",
+      "row": "A",
+      "position": "01"
     }
   }'
 ```

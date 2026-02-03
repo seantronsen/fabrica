@@ -75,17 +75,19 @@ cd device-manager
 fabrica add resource Device
 ```
 
-Edit `pkg/resources/device/device.go`:
+Edit `apis/example.fabrica.dev/v1/device_types.go`:
 
 ```go
-package device
+package v1
 
-import "github.com/openchami/fabrica/pkg/resource"
+import "github.com/openchami/fabrica/pkg/fabrica"
 
 type Device struct {
-    resource.Resource `json:",inline"`
-    Spec              DeviceSpec   `json:"spec"`
-    Status            DeviceStatus `json:"status,omitempty"`
+    APIVersion string           `json:"apiVersion"`
+    Kind       string           `json:"kind"`
+    Metadata   fabrica.Metadata `json:"metadata"`
+    Spec       DeviceSpec       `json:"spec"`
+    Status     DeviceStatus     `json:"status,omitempty"`
 }
 
 // DeviceSpec - User-defined desired state
@@ -100,12 +102,11 @@ type DeviceStatus struct {
     Health     string `json:"health,omitempty"`      // Healthy, Degraded, Unhealthy
     LastSeen   string `json:"lastSeen,omitempty"`    // RFC3339 timestamp
     Message    string `json:"message,omitempty"`     // Human-readable
-    Conditions []resource.Condition `json:"conditions,omitempty"`
+    Conditions []fabrica.Condition `json:"conditions,omitempty"`
 }
 
-func init() {
-    resource.RegisterResourcePrefix("Device", "dev")
-}
+// Note: Resource registration is now handled automatically by Fabrica CLI
+// during code generation based on your apis.yaml configuration
 ```
 
 ### Step 3: Generate Code
@@ -140,9 +141,11 @@ go build -o device-server ./cmd/server
 curl -X POST http://localhost:8080/devices \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "sensor-01",
-    "location": "datacenter-1",
-    "model": "TempPro-2000"
+        "metadata": {"name": "sensor-01"},
+        "spec": {
+            "location": "datacenter-1",
+            "model": "TempPro-2000"
+        }
   }'
 ```
 
@@ -155,9 +158,11 @@ Save the UID from the response (e.g., `dev-abc123`).
 curl -X PUT http://localhost:8080/devices/dev-abc123 \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Temperature Sensor",
-    "location": "datacenter-2",
-    "model": "TempPro-2000"
+        "metadata": {"name": "Temperature Sensor"},
+        "spec": {
+            "location": "datacenter-2",
+            "model": "TempPro-2000"
+        }
   }'
 
 # Response shows updated spec, status unchanged
@@ -229,7 +234,7 @@ import (
     "log"
 
     "github.com/example/device-manager/pkg/client"
-    "github.com/example/device-manager/pkg/resources/device"
+    v1 "github.com/example/device-manager/apis/example.fabrica.dev/v1"
 )
 
 func main() {
@@ -240,7 +245,7 @@ func main() {
     }
 
     // User updates device location (spec)
-    spec := device.DeviceSpec{
+    spec := v1.DeviceSpec{
         Location: "datacenter-3",
         Model:    "TempPro-2000",
     }
@@ -274,7 +279,7 @@ import (
     "time"
 
     "github.com/example/device-manager/pkg/client"
-    "github.com/example/device-manager/pkg/resources/device"
+    v1 "github.com/example/device-manager/apis/example.fabrica.dev/v1"
 )
 
 func main() {
@@ -284,7 +289,7 @@ func main() {
     }
 
     // Controller updates device status
-    status := device.DeviceStatus{
+    status := v1.DeviceStatus{
         Phase:    "Ready",
         Health:   "Healthy",
         LastSeen: time.Now().Format(time.RFC3339),
@@ -317,7 +322,7 @@ import (
     "time"
 
     "github.com/example/device-manager/pkg/client"
-    "github.com/example/device-manager/pkg/resources/device"
+    v1 "github.com/example/device-manager/apis/example.fabrica.dev/v1"
 )
 
 type DeviceController struct {

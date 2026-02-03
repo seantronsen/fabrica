@@ -37,9 +37,30 @@ go.work.sum
 # LLM Coding Assistant Cruft
 .claude
 CLAUDE/*
+.opencode/
 
 # Goreleaser artifacts
 dist/
 
 # Pre-commit temporary directory
 .examples.tmp/
+
+# Integration test temporary directories
+test/integration/tmp-debug/
+test/integration/projects/
+
+# Local build output
+bin/
+
+
+# Generated example projects (keep instruction-only examples tracked)
+examples/demo-export/
+examples/device-api/
+examples/device-inventory/
+examples/device-manager/
+examples/ent-advanced/
+examples/fabrica
+examples/fru-service/
+examples/myapp/
+examples/rack-inventory/
+examples/sensor-monitor/

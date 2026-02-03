@@ -36,9 +36,9 @@ cd device-inventory
 **What `fabrica init` creates:**
 ```
 device-inventory/
-├── .fabrica.yaml           # Configuration file (NEW!)
+├── .fabrica.yaml           # Project configuration
+├── apis.yaml               # API groups and versions (NEW!)
 ├── cmd/server/main.go      # Server with commented storage/routes
-├── pkg/resources/          # Empty (for your resources)
 ├── go.mod
 └── docs/
 ```
@@ -68,19 +68,23 @@ fabrica add resource Device
 
 **What `fabrica add resource` creates:**
 
-`pkg/resources/device/device.go`:
+`apis/example.fabrica.dev/v1/device_types.go` (group and version come from `apis.yaml`):
 ```go
-package device
+package v1
 
 import (
-    "context"
-    "github.com/openchami/fabrica/pkg/resource"
+  "context"
+  "github.com/openchami/fabrica/pkg/fabrica"
 )
 
+// Device represents a network device resource (flattened envelope)
+// Explicit fields improve Go autodoc and versioned conversions.
 type Device struct {
-    resource.Resource
-    Spec   DeviceSpec   `json:"spec" validate:"required"`
-    Status DeviceStatus `json:"status,omitempty"`
+  APIVersion string           `json:"apiVersion"`
+  Kind       string           `json:"kind"`
+  Metadata   fabrica.Metadata `json:"metadata"`
+  Spec       DeviceSpec       `json:"spec" validate:"required"`
+  Status     DeviceStatus     `json:"status,omitempty"`
 }
 
 type DeviceSpec struct {
@@ -100,23 +104,26 @@ func (r *Device) Validate(ctx context.Context) error {
     return nil
 }
 
-func init() {
-    resource.RegisterResourcePrefix("Device", "dev")
-}
+// Version conversion helpers and registration are generated.
 ```
+
+**Note on Versioning**: Fabrica now generates resources with explicit `APIVersion`, `Kind`, `Metadata`, `Spec`, and `Status` fields instead of embedding `resource.Resource`. The JSON format remains identical; update any custom code that referenced embedded fields. See [API Versioning Guide](../../docs/guides/versioning.md) for details.
 
 ### Step 3: Customize Your Resource
 
-Edit `pkg/resources/device/device.go` to add domain-specific fields.
+Edit `apis/example.fabrica.dev/v1/device_types.go` to add domain-specific fields.
 
 ```go
 type DeviceSpec struct {
     Description string `json:"description,omitempty" validate:"max=200"`
-    IPAddress   string `json:"ipAddress,omitempty" validate:"omitempty,ip"`
+    Hostname    string `json:"hostname,omitempty"`
+    IPAddr      string `json:"ipaddr,omitempty" validate:"omitempty,ip"`
     Location    string `json:"location,omitempty"`
     Rack        string `json:"rack,omitempty"`
 }
 ```
+
+**Note:** Field names use `ipaddr` (lowercase) to match common network device conventions and the test script.
 
 ### Step 4: Generate Code
 
@@ -151,9 +158,8 @@ device-inventory/
 │   │   └── versioning_middleware_generated.go    # API versioning
 │   └── storage/
 │       └── storage_generated.go        # File-based storage
-└── pkg/resources/
-    ├── device/device.go (your resource)
-    └── register_generated.go            # Resource registry
+└── apis/example.fabrica.dev/v1/
+  └── device_types.go (your resource types)
 ```
 
 The generator reads `.fabrica.yaml` and generates middleware based on your configuration:
@@ -277,15 +283,17 @@ DEVID=$(./client device list | jq -r '.[0].metadata.uid')
 If you prefer curl commands:
 
 ```bash
-# Create a device
+# Create a device (flattened envelope: metadata + spec)
 curl -X POST http://localhost:8080/devices \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "switch-01",
-    "description": "Core network switch",
-    "ipAddress": "192.168.1.10",
-    "location": "DataCenter A",
-    "rack": "R42"
+    "metadata": {"name": "switch-01"},
+    "spec": {
+      "description": "Core network switch",
+      "ipAddress": "192.168.1.10",
+      "location": "DataCenter A",
+      "rack": "R42"
+    }
   }'
 
 # List devices
@@ -439,7 +447,7 @@ vim .fabrica.yaml  # Edit validation mode, versioning strategy, etc.
 # 3. Add resource
 fabrica add resource Device
 
-# 4. Customize resource (edit pkg/resources/device/device.go)
+# 4. Customize resource (edit apis/example.fabrica.dev/v1/device_types.go)
 #    - Remove Name from DeviceSpec
 #    - Add your domain fields
 

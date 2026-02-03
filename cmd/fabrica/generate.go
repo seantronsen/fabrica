@@ -34,6 +34,19 @@ func readFabricaConfig() (*FabricaConfig, error) {
 	return config, nil
 }
 
+// readAPIsConfig reads apis.yaml when present.
+func readAPIsConfig() (*APIsConfig, error) {
+	cfg, err := LoadAPIsConfig("")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to load apis.yaml: %w", err)
+	}
+
+	return cfg, nil
+}
+
 func newGenerateCommand() *cobra.Command {
 	var (
 		handlers bool
@@ -50,6 +63,10 @@ func newGenerateCommand() *cobra.Command {
 		Short: "Generate code from resource definitions",
 		Long: `Generate server handlers, storage adapters, client code, and OpenAPI specs
 from your resource definitions.
+
+For versioned APIs (apis.yaml), this also generates
+pkg/apiversion/registry_generated.go, which is required for apiVersion
+validation in the server middleware.
 
 Examples:
   fabrica generate                    # Generate all
@@ -75,17 +92,33 @@ Examples:
 				fmt.Printf("  Module: %s\n", modulePath)
 			}
 
-			// Discover resources in pkg/resources
-			if debug {
-				fmt.Println("🔍 Discovering resources in pkg/resources/...")
+			apisConfig, err := readAPIsConfig()
+			if err != nil {
+				return err
 			}
-			resources, err := discoverResources()
+
+			if debug {
+				if apisConfig != nil {
+					fmt.Println("🔍 Discovering resources in apis/<group>/<version>/...")
+				} else {
+					fmt.Println("🔍 Discovering resources in pkg/resources/...")
+				}
+			}
+			resources, err := discoverResources(apisConfig)
 			if err != nil {
 				return fmt.Errorf("failed to discover resources: %w", err)
 			}
 
 			if len(resources) == 0 {
-				fmt.Println("⚠️  No resources found in pkg/resources/")
+				if apisConfig != nil {
+					if group, err := apisConfig.primaryGroup(); err == nil {
+						fmt.Printf("⚠️  No resources found in apis/%s/%s/\n", group.Name, group.StorageVersion)
+					} else {
+						fmt.Println("⚠️  No resources found in apis/<group>/<version>/")
+					}
+				} else {
+					fmt.Println("⚠️  No resources found in pkg/resources/")
+				}
 				fmt.Println("   Run 'fabrica add resource <name>' to create a resource first")
 				return nil
 			}
@@ -100,22 +133,31 @@ Examples:
 					fmt.Printf("🔍 Detected generated code version: %s\n", generatedVersion)
 				}
 
-				canProceed, err := checkVersionCompatibility(version, generatedVersion, force)
-				if err != nil {
-					return fmt.Errorf("version check failed: %w", err)
+				// Only perform version check if we have actual generated handler files
+				// This allows the first generation after adding resources to proceed
+				handlersExist := false
+				if _, err := os.Stat("cmd/server/routes_generated.go"); err == nil {
+					handlersExist = true
 				}
-				if !canProceed {
-					return fmt.Errorf("regeneration blocked due to version incompatibility (use --force to override)")
+
+				if handlersExist {
+					canProceed, err := checkVersionCompatibility(version, generatedVersion, force)
+					if err != nil {
+						return fmt.Errorf("version check failed: %w", err)
+					}
+					if !canProceed {
+						return fmt.Errorf("regeneration blocked due to version incompatibility (use --force to override)")
+					}
 				}
 			}
 
-			// Always regenerate registration file to ensure all resources are included
-			if debug {
-				fmt.Println("📝 Updating registration file...")
-			}
-			if err := generateRegistrationFile(debug); err != nil {
+			// Auto-generate registration file
+			fmt.Println()
+			fmt.Println("📝 Registration file not found, creating it...")
+			if err := generateRegistrationFile(debug, apisConfig); err != nil {
 				return fmt.Errorf("failed to generate registration file: %w", err)
 			}
+			fmt.Println()
 
 			// Note: We don't run go mod tidy here because:
 			// 1. Generated code may introduce new imports
@@ -315,6 +357,9 @@ func generateRunnerCode(modulePath, outputDir, packageName string, handlers, sto
 			generationCalls.WriteString("\tif err := gen.GenerateEntAdapter(); err != nil {\n")
 			generationCalls.WriteString("\t\tlog.Fatalf(\"Failed to generate Ent adapter: %v\", err)\n")
 			generationCalls.WriteString("\t}\n")
+			generationCalls.WriteString("\tif err := gen.GenerateEntHelpers(); err != nil {\n")
+			generationCalls.WriteString("\t\tlog.Fatalf(\"Failed to generate Ent helpers: %v\", err)\n")
+			generationCalls.WriteString("\t}\n")
 			generationCalls.WriteString("\tif err := gen.GenerateStorage(); err != nil {\n")
 			generationCalls.WriteString("\t\tlog.Fatalf(\"Failed to generate storage: %v\", err)\n")
 			generationCalls.WriteString("\t}\n")
@@ -333,6 +378,26 @@ func generateRunnerCode(modulePath, outputDir, packageName string, handlers, sto
 
 		generationCalls.WriteString("\tif err := gen.GenerateModels(); err != nil {\n")
 		generationCalls.WriteString("\t\tlog.Fatalf(\"Failed to generate models: %v\", err)\n")
+		generationCalls.WriteString("\t}\n")
+
+		// Generate export/import commands only for Ent storage (v0.4.0+)
+		generationCalls.WriteString("\tif gen.StorageType == \"ent\" {\n")
+		generationCalls.WriteString("\t\tif err := gen.GenerateExportCommand(); err != nil {\n")
+		generationCalls.WriteString("\t\t\tlog.Fatalf(\"Failed to generate export command: %v\", err)\n")
+		generationCalls.WriteString("\t\t}\n")
+
+		generationCalls.WriteString("\t\tif err := gen.GenerateImportCommand(); err != nil {\n")
+		generationCalls.WriteString("\t\t\tlog.Fatalf(\"Failed to generate import command: %v\", err)\n")
+		generationCalls.WriteString("\t\t}\n")
+		generationCalls.WriteString("\t}\n")
+
+		// Generate API version registry if apis.yaml exists
+		generationCalls.WriteString("\n")
+		generationCalls.WriteString("\t// Generate API version registry if versioning enabled\n")
+		generationCalls.WriteString("\tif gen.Config.VersioningEnabled {\n")
+		generationCalls.WriteString("\t\tif err := gen.GenerateAPIVersions(); err != nil {\n")
+		generationCalls.WriteString("\t\t\tlog.Fatalf(\"Failed to generate API versions: %v\", err)\n")
+		generationCalls.WriteString("\t\t}\n")
 		generationCalls.WriteString("\t}\n")
 	} else if client {
 		// Client-side generation
@@ -420,7 +485,6 @@ type FabricaConfig struct {
 type FeaturesConfig struct {
 	Validation  ValidationConfig  `+"`yaml:\"validation\"`"+`
 	Conditional ConditionalConfig `+"`yaml:\"conditional\"`"+`
-	Versioning  VersioningConfig  `+"`yaml:\"versioning\"`"+`
 	Events      EventsConfig      `+"`yaml:\"events\"`"+`
 	Storage     StorageConfig     `+"`yaml:\"storage\"`"+`
 }
@@ -438,11 +502,6 @@ type ConditionalConfig struct {
 type EventsConfig struct {
 	Enabled bool   `+"`yaml:\"enabled\"`"+`
 	BusType string `+"`yaml:\"bus_type\"`"+`
-}
-
-type VersioningConfig struct {
-	Enabled  bool   `+"`yaml:\"enabled\"`"+`
-	Strategy string `+"`yaml:\"strategy\"`"+`
 }
 
 type StorageConfig struct {
@@ -482,8 +541,6 @@ func main() {
 		gen.Config.ValidationMode = config.Features.Validation.Mode
 		gen.Config.ConditionalEnabled = config.Features.Conditional.Enabled
 		gen.Config.ETagAlgorithm = config.Features.Conditional.ETagAlgorithm
-		gen.Config.VersioningEnabled = config.Features.Versioning.Enabled
-		gen.Config.VersionStrategy = config.Features.Versioning.Strategy
 		gen.Config.EventsEnabled = config.Features.Events.Enabled
 		gen.Config.EventBusType = config.Features.Events.BusType
 
@@ -498,6 +555,10 @@ func main() {
 		}
 	}
 
+	if _, err := os.Stat("apis.yaml"); err == nil {
+		gen.Config.VersioningEnabled = true
+	}
+
 	if err := resources.RegisterAllResources(gen); err != nil {
 		log.Fatalf("Failed to register resources: %%v", err)
 	}
@@ -506,9 +567,101 @@ func main() {
 `, fmtImport, modulePath, outputDir, packageName, modulePath, verboseFlag, version, storageType, storageType, generationCalls.String())
 }
 
-// discoverResources scans pkg/resources for resource definitions
-// discoverResources scans pkg/resources for resource definitions and detects per-resource flags
-func discoverResources() ([]string, error) {
+// discoverResources scans for resource definitions using apis.yaml when present.
+func discoverResources(apisConfig *APIsConfig) ([]string, error) {
+	if apisConfig != nil {
+		return discoverVersionedResources(apisConfig)
+	}
+
+	// Legacy mode: scan pkg/resources/
+	return discoverLegacyResources()
+}
+
+// discoverVersionedResources scans apis/<group>/<storage-version>/ for resource definitions
+func discoverVersionedResources(apisConfig *APIsConfig) ([]string, error) {
+	group, err := apisConfig.primaryGroup()
+	if err != nil {
+		return nil, err
+	}
+
+	// Use storage version (hub) for generation
+	hubDir := filepath.Join("apis", group.Name, group.StorageVersion)
+
+	if _, err := os.Stat(hubDir); os.IsNotExist(err) {
+		// Hub directory doesn't exist yet, return resources listed in apis.yaml
+		return group.Resources, nil
+	}
+
+	var resources []string
+
+	err = filepath.Walk(hubDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip non-Go files and non-type files
+		if info.IsDir() || !strings.HasSuffix(path, "_types.go") {
+			return nil
+		}
+
+		// Parse the file to find resource type definitions
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return nil // Skip files that don't parse
+		}
+
+		// Look for struct types with APIVersion, Kind, Metadata fields (flattened envelope)
+		ast.Inspect(node, func(n ast.Node) bool {
+			typeSpec, ok := n.(*ast.TypeSpec)
+			if !ok {
+				return true
+			}
+
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				return true
+			}
+
+			// Check if it has flattened envelope fields
+			hasAPIVersion := false
+			hasKind := false
+			hasMetadata := false
+
+			for _, field := range structType.Fields.List {
+				if len(field.Names) > 0 {
+					fieldName := field.Names[0].Name
+					switch fieldName {
+					case "APIVersion":
+						hasAPIVersion = true
+					case "Kind":
+						hasKind = true
+					case "Metadata":
+						hasMetadata = true
+					}
+				}
+			}
+
+			// If it has all three flattened envelope fields, it's a resource
+			if hasAPIVersion && hasKind && hasMetadata {
+				resources = append(resources, typeSpec.Name.Name)
+			}
+
+			return true
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resources, nil
+}
+
+// discoverLegacyResources scans pkg/resources for resource definitions (legacy mode)
+func discoverLegacyResources() ([]string, error) {
 	resourcesDir := "pkg/resources"
 
 	if _, err := os.Stat(resourcesDir); os.IsNotExist(err) {
@@ -574,7 +727,7 @@ func discoverResources() ([]string, error) {
 }
 
 // generateRegistrationFile creates pkg/resources/register_generated.go
-func generateRegistrationFile(debug bool) error {
+func generateRegistrationFile(debug bool, apisConfig *APIsConfig) error {
 	if !debug {
 		fmt.Println("🔍 Discovering resources...")
 	}
@@ -586,13 +739,19 @@ func generateRegistrationFile(debug bool) error {
 	}
 
 	// 2. Discover resources
-	resources, err := discoverResources()
+	resources, err := discoverResources(apisConfig)
 	if err != nil {
 		return fmt.Errorf("failed to discover resources: %w", err)
 	}
 
 	if len(resources) == 0 {
-		fmt.Println("⚠️  No resources found in pkg/resources/")
+		if apisConfig != nil {
+			if group, err := apisConfig.primaryGroup(); err == nil {
+				fmt.Printf("⚠️  No resources found in apis/%s/%s/\n", group.Name, group.StorageVersion)
+			}
+		} else {
+			fmt.Println("⚠️  No resources found in pkg/resources/")
+		}
 		fmt.Println("   Run 'fabrica add resource <name>' to create a resource first")
 		return nil
 	}
@@ -602,7 +761,12 @@ func generateRegistrationFile(debug bool) error {
 	}
 
 	// 3. Generate registration file
-	content := generateRegistrationCode(modulePath, resources)
+	var content string
+	if apisConfig != nil {
+		content = generateVersionedRegistrationCode(modulePath, apisConfig, resources)
+	} else {
+		content = generateRegistrationCode(modulePath, resources)
+	}
 
 	// 4. Ensure pkg/resources directory exists
 	resourcesDir := filepath.Join("pkg", "resources")
@@ -678,6 +842,44 @@ func RegisterAllResources(gen *codegen.Generator) error {
 		content := string(data)
 		return strings.Contains(content, "+fabrica:resource-versioning=enabled")
 	}
+`, imports.String(), registrations.String())
+}
+
+// generateVersionedRegistrationCode creates registration code for versioned (apis/) mode
+func generateVersionedRegistrationCode(modulePath string, apisConfig *APIsConfig, resources []string) string {
+	var imports strings.Builder
+	var registrations strings.Builder
+
+	group, _ := apisConfig.primaryGroup()
+	hubVersion := group.StorageVersion
+
+	// Import the hub version package once
+	pkg := hubVersion // Package name is the version (e.g., v1)
+	// Import path: module/apis/group/version
+	importPath := fmt.Sprintf("%s/apis/%s/%s", modulePath, group.Name, hubVersion)
+	imports.WriteString(fmt.Sprintf("\t%s \"%s\"\n", pkg, importPath))
+
+	for _, resource := range resources {
+		registrations.WriteString(fmt.Sprintf("\tif err := gen.RegisterResource(&%s.%s{}); err != nil {\n", pkg, resource))
+		registrations.WriteString(fmt.Sprintf("\t\treturn fmt.Errorf(\"failed to register %s: %%w\", err)\n", resource))
+		registrations.WriteString("\t}\n")
+	}
+
+	return fmt.Sprintf(`// Code generated by fabrica. DO NOT EDIT.
+package resources
+
+import (
+	"fmt"
+
+	"github.com/openchami/fabrica/pkg/codegen"
+%s)
+
+// RegisterAllResources registers all discovered resources with the generator.
+// This file is auto-generated. Re-run 'fabrica generate' after adding resources.
+func RegisterAllResources(gen *codegen.Generator) error {
+%s
+	return nil
+}
 `, imports.String(), registrations.String())
 }
 

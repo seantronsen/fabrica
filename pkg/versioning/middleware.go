@@ -10,8 +10,11 @@
 package versioning
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,6 +36,9 @@ type VersionContext struct {
 
 	// GroupVersion is the API group version from the URL path
 	GroupVersion string
+
+	// GroupVersionExplicit indicates if the group version was explicit in the URL path
+	GroupVersionExplicit bool
 
 	// ResourceKind is the resource type being accessed
 	ResourceKind string
@@ -80,6 +86,7 @@ func VersionNegotiationMiddleware(registry *VersionRegistry, mapper ResourceMapp
 
 			// Extract API group version from URL path
 			ctx.GroupVersion = extractGroupVersionFromPath(r.URL.Path)
+			ctx.GroupVersionExplicit = hasExplicitGroupVersionFromPath(r.URL.Path)
 
 			// Extract resource kind from URL path
 			pluralName := extractResourceNameFromPath(r.URL.Path)
@@ -87,13 +94,30 @@ func VersionNegotiationMiddleware(registry *VersionRegistry, mapper ResourceMapp
 				ctx.ResourceKind = mapper.MapResourceToKind(pluralName)
 			}
 
-			// Parse requested version from Accept header
-			if acceptHeader := r.Header.Get("Accept"); acceptHeader != "" {
-				ctx.RequestedVersion = parseVersionFromAcceptHeader(acceptHeader)
+			// Parse requested version from request body (preferred when provided)
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+				if bodyVersion := parseVersionFromBody(r); bodyVersion != "" {
+					ctx.RequestedVersion = bodyVersion
+				}
 			}
 
-			// Get default version for this resource kind
+			// Parse requested version from Accept header (fallback)
+			if ctx.RequestedVersion == "" {
+				if acceptHeader := r.Header.Get("Accept"); acceptHeader != "" {
+					ctx.RequestedVersion = parseVersionFromAcceptHeader(acceptHeader)
+				}
+			}
+
+			// Use explicit URL version as a request when no version was specified
+			if ctx.RequestedVersion == "" && ctx.GroupVersionExplicit && ctx.GroupVersion != "" {
+				ctx.RequestedVersion = ctx.GroupVersion
+			}
+
+			// Resolve resource kind from registry (handles casing/singularization)
 			if ctx.ResourceKind != "" {
+				if resolvedKind, ok := registry.ResolveKind(ctx.ResourceKind); ok {
+					ctx.ResourceKind = resolvedKind
+				}
 				ctx.DefaultVersion = registry.GetDefaultVersion(ctx.ResourceKind)
 			}
 
@@ -164,6 +188,16 @@ func extractGroupVersionFromPath(path string) string {
 	return "v1"
 }
 
+func hasExplicitGroupVersionFromPath(path string) bool {
+	groupVersionRegex := regexp.MustCompile(`^/apis/[^/]+/([^/]+)/`)
+	if groupVersionRegex.MatchString(path) {
+		return true
+	}
+
+	legacyVersionRegex := regexp.MustCompile(`^/v([0-9]+(?:beta[0-9]+|alpha[0-9]+)?)/`)
+	return legacyVersionRegex.MatchString(path)
+}
+
 // extractResourceNameFromPath extracts the plural resource name from URL path
 // Examples:
 //
@@ -212,6 +246,47 @@ func parseVersionFromAcceptHeader(acceptHeader string) string {
 	return ""
 }
 
+func parseVersionFromBody(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+
+	// Restore body for downstream handlers
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+
+	var payload struct {
+		APIVersion string `json:"apiVersion"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+
+	return parseVersionFromAPIVersion(payload.APIVersion)
+}
+
+func parseVersionFromAPIVersion(apiVersion string) string {
+	apiVersion = strings.TrimSpace(apiVersion)
+	if apiVersion == "" {
+		return ""
+	}
+
+	if strings.Contains(apiVersion, "/") {
+		parts := strings.Split(apiVersion, "/")
+		return parts[len(parts)-1]
+	}
+
+	return apiVersion
+}
+
 // negotiateVersion determines the final version to serve based on client preferences and availability
 func negotiateVersion(ctx *VersionContext, registry *VersionRegistry) string {
 	// If no resource kind identified, return group version
@@ -222,7 +297,12 @@ func negotiateVersion(ctx *VersionContext, registry *VersionRegistry) string {
 	// Get available versions for this resource
 	availableVersions := registry.ListVersions(ctx.ResourceKind)
 	if len(availableVersions) == 0 {
-		// No versions registered, fallback to group version
+		// No versions registered for this kind. If the client explicitly
+		// requested a version, we cannot validate it — reject as unsupported.
+		if ctx.RequestedVersion != "" {
+			return ""
+		}
+		// No request preference: fallback to group version default.
 		return ctx.GroupVersion
 	}
 

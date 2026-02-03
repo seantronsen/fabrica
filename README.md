@@ -19,6 +19,17 @@ SPDX-License-Identifier: MIT
 > **🏗️ Code Generator for Go REST APIs**
 > Transform Go structs into production-ready REST APIs with OpenAPI specs, storage backends, and middleware in minutes.
 
+## 📚 Documentation & Resources
+
+| Resource | Description |
+|----------|-------------|
+| **[Full Documentation](https://openchami.github.io/fabrica/)** | Complete guides, tutorials, and best practices |
+| **[API Reference (GoDoc)](https://pkg.go.dev/github.com/openchami/fabrica)** | Comprehensive Go package documentation |
+| **[Quickstart](docs/guides/quickstart.md)** | Five minute quickstart |
+| **[Getting Started Guide](docs/guides/getting-started.md)** | Step-by-step introduction to Fabrica |
+| **[Examples](examples/)** | Hands-on learning with real-world projects |
+
+
 Fabrica is a powerful code generation tool that accelerates API development by transforming simple Go struct definitions into complete, production-ready REST APIs. Define your resources once, and Fabrica generates everything you need: handlers, storage layers, clients, validation, OpenAPI documentation, and more.
 
 ## ✨ Key Features
@@ -30,7 +41,8 @@ Fabrica is a powerful code generation tool that accelerates API development by t
 - **🎯 Smart Validation** - Request validation with detailed, structured error responses
 - **⚡ Developer Experience** - CLI tools, hot-reload development, comprehensive testing
 - **📡 CloudEvents Integration** - Automatic event publishing for resource lifecycle (CRUD) and condition changes
-- **🌐 Cloud-Native Ready** - API versioning, conditional requests (ETags), event-driven patterns
+- **🌐 Cloud-Native Ready** - [Hub/spoke API versioning](docs/guides/versioning.md), conditional requests (ETags), event-driven patterns
+- **🔄 API Versioning (Hub/Spoke)** - Kubebuilder-style versioning with automatic conversion between versions
 - **🏗️ Production Patterns** - Consistent API structure, error handling, and middleware
 
 ## 🎯 Perfect For
@@ -68,102 +80,16 @@ cd fabrica
 make install
 ```
 
-## 🚀 Quick Start (5 Minutes)
-
-**1. Initialize your project:**
-
-```bash
-fabrica init device-api
-cd device-api
-```
-
-**2. Add your first resource:**
-
-```bash
-fabrica add resource Device
-```
-
-**3. Update your Spec and Status fields in `pkg/resources/device/device.go`:**
-
-Add desired fields to generated `DeviceSpec` and `DeviceStatus` structs, retaining other code.
-
-```go
-// DeviceSpec defines the desired state of a Device
-type DeviceSpec struct {
-    // copy contents to generated DeviceSpec
-    Type         string            `json:"type" validate:"required,oneof=server switch router storage"`
-    IPAddress    string            `json:"ipAddress" validate:"required,ip"`
-    Status       string            `json:"status" validate:"required,oneof=active inactive maintenance"`
-    Tags         map[string]string `json:"tags,omitempty"`
-    LastSeen     *time.Time        `json:"lastSeen,omitempty"`
-    Port         int               `json:"port,omitempty" validate:"min=1,max=65535"`
-}
-
-// DeviceStatus represents the observed state of a Device
-type DeviceStatus struct {
-    // copy contents to generated DeviceSpec
-    Health       string    `json:"health" validate:"required,oneof=healthy degraded unhealthy unknown"`
-    Uptime       int64     `json:"uptime" validate:"min=0"`
-    LastChecked  time.Time `json:"lastChecked"`
-    ErrorCount   int       `json:"errorCount" validate:"min=0"`
-    Version      string    `json:"version,omitempty"`
-}
-```
-
-**4. Generate your API:**
-
-```bash
-fabrica generate
-```
-
-**5. Update dependencies:**
-
-```bash
-go mod tidy
-```
-
-**6. Run your server:**
-
-```bash
-go run ./cmd/server
-```
-
-**7. Test your API:**
-
-```bash
-# Create a device
-curl -X POST http://localhost:8080/devices \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "web-server-01",
-    "type": "server",
-    "ipAddress": "192.168.1.100",
-    "status": "active",
-    "port": 443,
-    "tags": {"role": "web", "datacenter": "us-west-2"},
-    "labels": {"environment": "production", "team": "platform"}
-  }'
-
-# List all devices
-curl http://localhost:8080/devices
-
-# Get specific device
-curl http://localhost:8080/devices/web-server-01
-
-# View OpenAPI documentation
-open http://localhost:8080/swagger/
-```
-
-🎉 **That's it!** You now have a fully functional REST API with validation, OpenAPI docs, and structured error handling.
-
 ## 📚 Learn by Example
 
 Explore hands-on examples in the [`examples/`](examples/) directory:
 
 - **[Basic CRUD](examples/01-basic-crud/)** ⚡ - Start here! Complete CRUD API in 5 minutes
 - **[FRU Service](examples/03-fru-service/)** 🔐 - Production patterns with database integration
-- **[CloudEvents Integration](examples/05-cloud-events/)** 📡 - Automatic event publishing for lifecycle and condition changes
 - **[Rack Reconciliation](examples/04-rack-reconciliation/)** 🔄 - Event-driven resource management
+- **[CloudEvents Integration](examples/05-cloud-events/)** 📡 - Automatic event publishing for lifecycle and condition changes
+- **[Status Subresource](examples/06-status-subresource/)** 🛡️ - Separate spec and status updates
+- **[Export/Import](examples/10-export-import/)** 💾 - Offline backup and restore operations
 
 ---
 
@@ -179,8 +105,9 @@ Fabrica follows clean architecture principles and generates well-structured proj
 │   ├── 📁 server/           # 🌐 REST API server with all endpoints
 │   └── 📁 cli/              # 🖥️ Command-line client tools
 ├── 📁 pkg/
-│   ├── 📁 resources/        # 📝 Your resource definitions (you write these)
 │   └── 📁 client/           # 🔌 Generated HTTP client with proper error handling
+├── 📁 apis/                 # 📝 Your versioned resource types (you write these)
+│   └── 📁 <group>/<version>/  # e.g., example.fabrica.dev/v1/*_types.go
 ├── 📁 internal/
 │   ├── 📁 storage/          # 💾 Generated storage layer (file or database)
 │   └── 📁 middleware/       # ⚙️ Generated middleware (auth, validation, etc.)
@@ -205,8 +132,9 @@ Fabrica follows clean architecture principles and generates well-structured proj
 > Fabrica supports **regenerating code** when you modify your resources or configuration. This means:
 >
 > **✅ SAFE TO EDIT:**
-> - `pkg/resources/*/` - Your resource definitions (spec/status structs)
-> - `.fabrica.yaml` - Project configuration
+> - `apis/<group>/<version>/*_types.go` - Your resource definitions (spec/status structs)
+> - `apis.yaml` - API group and version configuration
+> - `.fabrica.yaml` - Feature flags and project settings
 > - `cmd/server/main.go` - Server customizations (before first `// Generated` comment)
 >
 > **❌ NEVER EDIT:**
@@ -301,25 +229,34 @@ type DeviceStatus struct {
 > **💡 Pro Tip:** Focus on designing your `spec` and `status` structs - Fabrica handles all the envelope complexity automatically!
 
 
-## 📖 Documentation
+## 📖 In-Depth Documentation
 
-**🚀 Getting Started:**
+**🚀 Quick Learning:**
 - [Complete Getting Started Guide](docs/guides/getting-started.md) - Step-by-step tutorial
-- [Quick Start Examples](examples/) - Hands-on learning
+- [Quickstart Examples](examples/) - Hands-on learning with working code
+- [Full Documentation Website](https://openchami.github.io/fabrica/) - All guides and tutorials
 
 **🏗️ Architecture & Design:**
 - [Architecture Overview](docs/reference/architecture.md) - Understanding Fabrica's design principles
 - [Resource Model Guide](docs/guides/resource-model.md) - How to design and define resources
+- [API Versioning Guide](docs/guides/versioning.md) - Hub/Spoke versioning patterns
+- [API Configuration Reference](docs/apis-yaml.md) - apis.yaml structure and workflows
 
 **💾 Storage & Data:**
 - [Storage Systems](docs/guides/storage.md) - File vs database backends comparison
 - [Ent Storage Integration](docs/guides/storage-ent.md) - Database setup and configuration
 
 **⚙️ Advanced Topics:**
-- [Code Generation](docs/reference/codegen.md) - How templates work and customization
+- [Code Generation Reference](docs/reference/codegen.md) - How templates work and customization
+- [CLI Command Reference](docs/reference/cli.md) - Complete CLI documentation with flags and workflows
+- [Middleware Customization](docs/guides/middleware.md) - Adding custom middleware for authentication, logging, etc.
 - [Validation System](docs/guides/validation.md) - Request validation and error handling
-- [Event System](docs/guides/events.md) - CloudEvents integration
+- [Event System](docs/guides/events.md) - CloudEvents integration and event-driven patterns
 - [Reconciliation](docs/guides/reconciliation.md) - Controller pattern for resource management
+- [Conditional Requests & PATCH](docs/guides/conditional-and-patch.md) - ETag-based preconditions
+
+**📖 API Documentation:**
+- [GoDoc Package Reference](https://pkg.go.dev/github.com/openchami/fabrica) - Complete Go API documentation
 
 ## 🤝 Contributing
 

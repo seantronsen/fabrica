@@ -48,6 +48,7 @@ import (
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed templates/*
@@ -154,7 +155,7 @@ func NewGenerator(outputDir, packageName, modulePath string) *Generator {
 			ValidationMode:     "strict",
 			ConditionalEnabled: true,
 			ETagAlgorithm:      "sha256",
-			VersioningEnabled:  true,
+			VersioningEnabled:  false,
 			VersionStrategy:    "header",
 			EventsEnabled:      false,
 			EventBusType:       "memory",
@@ -185,6 +186,24 @@ func (g *Generator) templateData(resource ResourceMetadata, templateName string)
 		}
 	}
 
+	// Determine if this is a versioned project (uses apis/ directory structure)
+	// vs legacy mode (uses pkg/resources/ with embedded resource.Resource)
+	isVersioned := g.Config.VersioningEnabled && strings.Contains(resource.Package, "/apis/")
+
+	// Build unique imports for this resource + all resources
+	imports := make(map[string]string) // path -> alias
+	for _, r := range g.Resources {
+		imports[r.Package] = r.PackageAlias
+	}
+	type Import struct {
+		Path  string
+		Alias string
+	}
+	var uniqueImports []Import
+	for path, alias := range imports {
+		uniqueImports = append(uniqueImports, Import{Path: path, Alias: alias})
+	}
+
 	return map[string]interface{}{
 		"Name":                  resource.Name,
 		"PluralName":            resource.PluralName,
@@ -197,10 +216,12 @@ func (g *Generator) templateData(resource ResourceMetadata, templateName string)
 		"StorageName":           resource.StorageName,
 		"Tags":                  resource.Tags,
 		"PerResourceVersioning": perResVersioning,
+		"IsVersioned":           isVersioned,
 		"SpecFields":            resource.SpecFields,
 		"Versions":              resource.Versions,
 		"DefaultVersion":        resource.DefaultVersion,
 		"APIGroupVersion":       resource.APIGroupVersion,
+		"UniqueImports":         uniqueImports,
 		"ModulePath":            g.ModulePath,
 		"Version":               g.Version,
 		"GeneratedAt":           time.Now().Format(time.RFC3339),
@@ -211,17 +232,33 @@ func (g *Generator) templateData(resource ResourceMetadata, templateName string)
 // globalTemplateData creates template data for templates that process all resources at once
 // (e.g., models, routes, registration files)
 func (g *Generator) globalTemplateData(templateName string) map[string]interface{} {
+	// Deduplicate imports
+	imports := make(map[string]string) // path -> alias
+	for _, r := range g.Resources {
+		imports[r.Package] = r.PackageAlias
+	}
+
+	type Import struct {
+		Path  string
+		Alias string
+	}
+	var uniqueImports []Import
+	for path, alias := range imports {
+		uniqueImports = append(uniqueImports, Import{Path: path, Alias: alias})
+	}
+
 	return map[string]interface{}{
-		"PackageName": g.PackageName,
-		"ModulePath":  g.ModulePath,
-		"Resources":   g.Resources,
-		"ProjectName": g.extractProjectName(),
-		"StorageType": g.StorageType,
-		"DBDriver":    g.DBDriver,
-		"Config":      g.Config,
-		"Version":     g.Version,
-		"GeneratedAt": time.Now().Format(time.RFC3339),
-		"Template":    templateName,
+		"PackageName":   g.PackageName,
+		"ModulePath":    g.ModulePath,
+		"Resources":     g.Resources,
+		"UniqueImports": uniqueImports,
+		"ProjectName":   g.extractProjectName(),
+		"StorageType":   g.StorageType,
+		"DBDriver":      g.DBDriver,
+		"Config":        g.Config,
+		"Version":       g.Version,
+		"GeneratedAt":   time.Now().Format(time.RFC3339),
+		"Template":      templateName,
 	}
 }
 
@@ -482,9 +519,16 @@ func (g *Generator) GenerateAll() error {
 			if err := g.GenerateEntAdapter(); err != nil {
 				return err
 			}
+			if err := g.GenerateEntHelpers(); err != nil {
+				return err
+			}
 		}
 
 		if err := g.GenerateModels(); err != nil {
+			return err
+		}
+		// Generate API versions (hub/spoke) if apis.yaml exists
+		if err := g.GenerateAPIVersions(); err != nil {
 			return err
 		}
 		if err := g.GenerateHandlers(); err != nil {
@@ -495,6 +539,15 @@ func (g *Generator) GenerateAll() error {
 		}
 		if err := g.GenerateRoutes(); err != nil {
 			return err
+		}
+		// Export/import commands only work with Ent storage (they use Ent-specific query methods)
+		if g.StorageType == "ent" {
+			if err := g.GenerateExportCommand(); err != nil {
+				return err
+			}
+			if err := g.GenerateImportCommand(); err != nil {
+				return err
+			}
 		}
 		if err := g.GenerateStorage(); err != nil {
 			return err
@@ -692,6 +745,8 @@ func (g *Generator) LoadTemplates() error {
 		"routes":   "server/routes.go.tmpl",
 		"models":   "server/models.go.tmpl",
 		"openapi":  "server/openapi.go.tmpl",
+		"export":   "server/export.go.tmpl",
+		"import":   "server/import.go.tmpl",
 
 		// Client templates
 		"client":       "client/client.go.tmpl",
@@ -699,10 +754,12 @@ func (g *Generator) LoadTemplates() error {
 		"clientCmd":    "client/cmd.go.tmpl",
 
 		// Storage templates
-		"storage":    "storage/file.go.tmpl",
-		"storageEnt": "storage/ent.go.tmpl",
-		"entAdapter": "storage/adapter.go.tmpl",
-		"generate":   "storage/generate.go.tmpl",
+		"storage":         "storage/file.go.tmpl",
+		"storageEnt":      "storage/ent.go.tmpl",
+		"entAdapter":      "storage/adapter.go.tmpl",
+		"generate":        "storage/generate.go.tmpl",
+		"entQueries":      "storage/ent_queries.go.tmpl",
+		"entTransactions": "storage/ent_transactions.go.tmpl",
 
 		// Ent schema templates
 		"entSchemaResource":   "ent/schema/resource.go.tmpl",
@@ -720,6 +777,11 @@ func (g *Generator) LoadTemplates() error {
 		"reconcilerStub":         "reconciliation/stub.go.tmpl",
 		"reconcilerRegistration": "reconciliation/registration.go.tmpl",
 		"eventHandlers":          "reconciliation/event-handlers.go.tmpl",
+
+		// API Versioning templates
+		"typesHub":   "apiversion/types_hub.gotmpl",
+		"typesSpoke": "apiversion/types_spoke.gotmpl",
+		"versionReg": "apiversion/register.gotmpl",
 	}
 
 	g.Templates = make(map[string]*template.Template)
@@ -1043,6 +1105,63 @@ func (g *Generator) GenerateEntAdapter() error {
 	return nil
 }
 
+// GenerateEntHelpers generates additional Ent-based helper code (queries, transactions)
+func (g *Generator) GenerateEntHelpers() error {
+	if g.StorageType != "ent" {
+		return nil
+	}
+
+	fmt.Printf("🧰 Generating Ent helpers (queries, transactions)...\n")
+
+	// internal/storage directory
+	storageDir := filepath.Join("internal", "storage")
+	if err := os.MkdirAll(storageDir, 0755); err != nil {
+		return fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
+	// ent_queries_generated.go
+	if err := g.executeTemplate("entQueries", filepath.Join(storageDir, "ent_queries_generated.go"), g.globalTemplateData("storage/ent_queries.go.tmpl")); err != nil {
+		return fmt.Errorf("failed to generate ent queries: %w", err)
+	}
+
+	// ent_transactions_generated.go
+	if err := g.executeTemplate("entTransactions", filepath.Join(storageDir, "ent_transactions_generated.go"), g.globalTemplateData("storage/ent_transactions.go.tmpl")); err != nil {
+		return fmt.Errorf("failed to generate ent transactions: %w", err)
+	}
+
+	return nil
+}
+
+// GenerateExportCommand generates the server export subcommand
+func (g *Generator) GenerateExportCommand() error {
+	fmt.Printf("📤 Generating export command...\n")
+
+	outputPath := filepath.Join(g.OutputDir, "export.go")
+	data := g.globalTemplateData("server/export.go.tmpl")
+
+	if err := g.executeTemplate("export", outputPath, data); err != nil {
+		return fmt.Errorf("failed to generate export command: %w", err)
+	}
+
+	fmt.Printf("  ✓ Generated %s\n", outputPath)
+	return nil
+}
+
+// GenerateImportCommand generates the server import subcommand
+func (g *Generator) GenerateImportCommand() error {
+	fmt.Printf("📥 Generating import command...\n")
+
+	outputPath := filepath.Join(g.OutputDir, "import.go")
+	data := g.globalTemplateData("server/import.go.tmpl")
+
+	if err := g.executeTemplate("import", outputPath, data); err != nil {
+		return fmt.Errorf("failed to generate import command: %w", err)
+	}
+
+	fmt.Printf("  ✓ Generated %s\n", outputPath)
+	return nil
+}
+
 // executeTemplate executes a template and writes formatted output to a file
 func (g *Generator) executeTemplate(templateName, outputPath string, data interface{}) error {
 	tmpl, exists := g.Templates[templateName]
@@ -1081,6 +1200,81 @@ func (g *Generator) executeTemplate(templateName, outputPath string, data interf
 	}
 
 	fmt.Printf("  ✓ Generated %s\n", outputPath)
+
+	return nil
+}
+
+// GenerateAPIVersions generates hub/spoke versioned types based on apis.yaml configuration
+// This is an optional feature - if apis.yaml doesn't exist, this is a no-op
+func (g *Generator) GenerateAPIVersions() error {
+	// Check if apis.yaml exists
+	if _, err := os.Stat("apis.yaml"); os.IsNotExist(err) {
+		return nil // Optional feature - skip if not configured
+	}
+
+	// Parse apis.yaml for groups and versions
+	data, err := os.ReadFile("apis.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to read apis.yaml: %w", err)
+	}
+
+	// Minimal schema for apis.yaml used by codegen
+	type apisGroup struct {
+		Name           string   `yaml:"name"`
+		StorageVersion string   `yaml:"storageVersion"`
+		Versions       []string `yaml:"versions"`
+		Resources      []string `yaml:"resources"`
+	}
+	type apisConfig struct {
+		Groups []apisGroup `yaml:"groups"`
+	}
+
+	var cfg apisConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("failed to parse apis.yaml: %w", err)
+	}
+
+	if len(cfg.Groups) == 0 {
+		return nil // nothing to generate
+	}
+
+	fmt.Printf("🔄 Generating API version registry...\n")
+
+	// Build template data for version registry
+	type regGroup struct {
+		Name           string
+		StorageVersion string
+		Spokes         []string
+		Resources      []string
+	}
+	var groups []regGroup
+	for _, g := range cfg.Groups {
+		groups = append(groups, regGroup{
+			Name:           g.Name,
+			StorageVersion: g.StorageVersion,
+			Spokes:         g.Versions,
+			Resources:      g.Resources,
+		})
+	}
+
+	dataMap := map[string]interface{}{
+		"Version":     g.Version,
+		"GeneratedAt": time.Now().Format(time.RFC3339),
+		"Template":    "apiversion/register.gotmpl",
+		"Groups":      groups,
+	}
+
+	// Ensure output directory exists
+	outDir := filepath.Join("pkg", "apiversion")
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("failed to create apiversion directory: %w", err)
+	}
+
+	// Write registry initializer
+	outputPath := filepath.Join(outDir, "registry_generated.go")
+	if err := g.executeTemplate("versionReg", outputPath, dataMap); err != nil {
+		return fmt.Errorf("failed to generate version registry: %w", err)
+	}
 
 	return nil
 }

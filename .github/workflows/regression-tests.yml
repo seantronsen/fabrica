@@ -19,32 +19,35 @@ on:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.24.11', '1.25.5']
+      fail-fast: false
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.24'
+        go-version: ${{ matrix.go-version }}
         check-latest: true
 
     - name: Build fabrica
       run: make build
 
     - name: Run Go integration tests
-      env:
-        GOPRIVATE: "github.com/me/*,example.com/*"
       run: |
         cd test/integration
+        go mod tidy
         go test -v -timeout 10m
 
     - name: Upload test artifacts
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: test-artifacts
+        name: test-artifacts-go-${{ matrix.go-version }}
         path: |
           test/integration/testdata/
         retention-days: 7
