@@ -5,6 +5,8 @@ description: "How the storage contract lets you swap file and database backends 
 author: "Alex Lovell-Troy"
 ---
 
+> **Note (v0.4.0):** This post predates hub/spoke API versioning and the flattened resource envelope. Some snippets may differ from current generator output.
+
 Fabrica generates REST services from Kubernetes‑style resources. The shape is always the same: APIVersion, Kind, Metadata, Spec, and Status. Handlers, routes, models, and the client are generated from templates. What you store those resources in is up to you. The storage layer is pluggable, so you can start with files and move to a database later without rewriting your API.
 
 The key idea is separation. The handlers talk to a storage interface, not to disks or SQL directly. You can see that in `pkg/codegen/templates/server/handlers.go.tmpl`. The code calls storage helpers with typed resources and returns results to the client. The same handler code compiles whether you pick the file backend or the Ent (database) backend.

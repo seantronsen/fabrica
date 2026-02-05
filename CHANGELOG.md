@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-02-05
+
 ### Added
 - **Hub/Spoke API Versioning** - Kubebuilder-style versioning for generated APIs
   - Single hub (storage) version per API group with multiple spoke (external) versions
@@ -273,7 +275,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Storage system architecture documentation
 - Getting started guide
 
-[Unreleased]: https://github.com/openchami/fabrica/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/openchami/fabrica/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/openchami/fabrica/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/openchami/fabrica/compare/v0.2.9...v0.3.1
 [v0.2.9]: https://github.com/openchami/fabrica/compare/v0.2.8...v0.2.9
 [v0.2.8]: https://github.com/openchami/fabrica/compare/v0.2.4...v0.2.8

@@ -5,6 +5,8 @@ description: "A gentle look at controllers that react to change and keep resourc
 author: "Alex Lovell-Troy"
 ---
 
+> **Note (v0.4.0):** This post predates hub/spoke API versioning and the flattened resource envelope. Some snippets may differ from current generator output.
+
 Some jobs are better done by the system than by users clicking through steps. Reconciliation makes this possible. You declare what you want in Spec, and a controller reads that intent and works until the resource reaches a steady state. When things drift, the controller nudges them back.
 
 In Fabrica, reconciliation is a first‑class pattern. The generated server publishes events when resources change, and the reconciliation controller listens and enqueues work. Your code reacts by reading the resource, taking actions, and updating Status. See `pkg/events/events.go` for event helpers and `pkg/reconcile/controller.go` for the controller.

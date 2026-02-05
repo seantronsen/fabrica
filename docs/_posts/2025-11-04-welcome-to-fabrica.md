@@ -5,6 +5,8 @@ description: "A tour of the server you get from Fabrica and how it helps you shi
 author: "Alex Lovell-Troy"
 ---
 
+> **Note (v0.4.0):** This post predates hub/spoke API versioning and the flattened resource envelope. Some snippets may differ from current generator output.
+
 ## Context
 
 Shipping a REST API should not mean re‑deciding basic patterns every time. URLs, methods, list shapes, and error handling are easy to do, and easy to do differently. Those small differences raise support costs. Fabrica gives you a full HTTP server that follows the same rules across projects, so you can focus on your domain.

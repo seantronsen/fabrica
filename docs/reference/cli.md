@@ -398,7 +398,7 @@ fabrica version
 
 **Output:**
 ```
-Fabrica version v0.3.1
+Fabrica version v0.4.0
   commit: abc123def456
   built: 2025-01-14T10:00:00Z
 ```
