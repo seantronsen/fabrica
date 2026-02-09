@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
@@ -791,15 +793,24 @@ func generateRegistrationFile(debug bool, apisConfig *APIsConfig) error {
 	return nil
 }
 
+func toPascal(s string) string {
+    if s == "" {
+        return ""
+    }
+    r, n := utf8.DecodeRuneInString(s)
+    return string(unicode.ToUpper(r)) + s[n:]
+}
 // generateRegistrationCode creates the content of the registration file
 func generateRegistrationCode(modulePath string, resources []string) string {
 	var imports strings.Builder
 	var registrations strings.Builder
 
 	for _, resource := range resources {
+		resourceStruct := toPascal(resource)
+
 		pkg := strings.ToLower(resource)
 		imports.WriteString(fmt.Sprintf("\t\"%s/pkg/resources/%s\"\n", modulePath, pkg))
-		registrations.WriteString(fmt.Sprintf("\tif err := gen.RegisterResource(&%s.%s{}); err != nil {\n", pkg, resource))
+		registrations.WriteString(fmt.Sprintf("\tif err := gen.RegisterResource(&%s.%s{}); err != nil {\n", pkg, resourceStruct))
 		registrations.WriteString(fmt.Sprintf("\t\treturn fmt.Errorf(\"failed to register %s: %%w\", err)\n", resource))
 		registrations.WriteString("\t}\n")
 
@@ -860,7 +871,9 @@ func generateVersionedRegistrationCode(modulePath string, apisConfig *APIsConfig
 	imports.WriteString(fmt.Sprintf("\t%s \"%s\"\n", pkg, importPath))
 
 	for _, resource := range resources {
-		registrations.WriteString(fmt.Sprintf("\tif err := gen.RegisterResource(&%s.%s{}); err != nil {\n", pkg, resource))
+		resourceStruct := toPascal(resource)
+		
+		registrations.WriteString(fmt.Sprintf("\tif err := gen.RegisterResource(&%s.%s{}); err != nil {\n", pkg, resourceStruct))
 		registrations.WriteString(fmt.Sprintf("\t\treturn fmt.Errorf(\"failed to register %s: %%w\", err)\n", resource))
 		registrations.WriteString("\t}\n")
 	}
