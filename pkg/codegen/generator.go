@@ -124,6 +124,14 @@ type GeneratorConfig struct {
 	// Storage configuration
 	StorageType string // file, ent
 	DBDriver    string // postgres, mysql, sqlite
+
+	// TokenSmith-first Security generation toggles.
+	//
+	// NOTE: WithAuth is the legacy template toggle for generating auth-related
+	// scaffolding (go.mod + init/main stubs). We map Security.AuthN onto it.
+	WithAuth bool
+
+	SecurityAuthNEnabled bool
 }
 
 // Generator handles code generation for resources
@@ -161,6 +169,7 @@ func NewGenerator(outputDir, packageName, modulePath string) *Generator {
 			EventBusType:       "memory",
 			StorageType:        "file",
 			DBDriver:           "sqlite",
+			WithAuth:           false,
 		},
 	}
 }
@@ -256,6 +265,7 @@ func (g *Generator) globalTemplateData(templateName string) map[string]interface
 		"StorageType":   g.StorageType,
 		"DBDriver":      g.DBDriver,
 		"Config":        g.Config,
+		"WithAuth":      g.Config.WithAuth,
 		"Version":       g.Version,
 		"GeneratedAt":   time.Now().Format(time.RFC3339),
 		"Template":      templateName,
@@ -741,12 +751,14 @@ func (g *Generator) LoadTemplates() error {
 	// Organized by feature for better maintainability
 	templateFiles := map[string]string{
 		// Server templates
-		"handlers": "server/handlers.go.tmpl",
-		"routes":   "server/routes.go.tmpl",
-		"models":   "server/models.go.tmpl",
-		"openapi":  "server/openapi.go.tmpl",
-		"export":   "server/export.go.tmpl",
-		"import":   "server/import.go.tmpl",
+		"handlers":                  "server/handlers.go.tmpl",
+		"routes":                    "server/routes.go.tmpl",
+		"models":                    "server/models.go.tmpl",
+		"openapi":                   "server/openapi.go.tmpl",
+		"export":                    "server/export.go.tmpl",
+		"import":                    "server/import.go.tmpl",
+		"authzClassifier":           "server/authz_classifier.go.tmpl",
+		"authzClassifierCreateOnce": "server/authz_classifier_create_once.go.tmpl",
 
 		// Client templates
 		"client":       "client/client.go.tmpl",
