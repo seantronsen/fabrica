@@ -6,9 +6,9 @@
 package constants
 
 // TokenSmithModulePath is the Go module path for TokenSmith.
-const TokenSmithModulePath = "github.com/OpenCHAMI/tokensmith"
+const TokenSmithModulePath = "github.com/openchami/tokensmith"
 
 // TokenSmithVersion pins the TokenSmith version used by generated services.
 //
 // Keep this deterministic to ensure stable regeneration results.
-const TokenSmithVersion = "v0.0.0" // TODO: set to a real released version
+const TokenSmithVersion = "v0.0.1"
