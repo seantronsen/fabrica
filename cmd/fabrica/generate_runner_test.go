@@ -11,6 +11,7 @@ import (
 
 func TestGenerateRunnerCode_UsesStableAuthSetter(t *testing.T) {
 	runnerCode := generateRunnerCode(
+		"/tmp/project",
 		"github.com/example/project",
 		"cmd/server",
 		"main",
@@ -22,8 +23,8 @@ func TestGenerateRunnerCode_UsesStableAuthSetter(t *testing.T) {
 		"file",
 	)
 
-	if !strings.Contains(runnerCode, "gen.SetAuthEnabled(config.Features.Security.AuthN.Enabled)") {
-		t.Fatalf("runner code should configure auth via SetAuthEnabled")
+	if !strings.Contains(runnerCode, "setAuthEnabledCompat(gen, authEnabled)") {
+		t.Fatalf("runner code should configure auth via compatibility helper")
 	}
 
 	if strings.Contains(runnerCode, "gen.Config.WithAuth = true") {
@@ -37,6 +38,7 @@ func TestGenerateRunnerCode_UsesStableAuthSetter(t *testing.T) {
 
 func TestGenerateRunnerCode_SetsAuthForFalseAndTrue(t *testing.T) {
 	runnerCode := generateRunnerCode(
+		"/tmp/project",
 		"github.com/example/project",
 		"cmd/server",
 		"main",
@@ -48,7 +50,7 @@ func TestGenerateRunnerCode_SetsAuthForFalseAndTrue(t *testing.T) {
 		"file",
 	)
 
-	if !strings.Contains(runnerCode, "gen.SetAuthEnabled(config.Features.Security.AuthN.Enabled)") {
+	if !strings.Contains(runnerCode, "setAuthEnabledCompat(gen, authEnabled)") {
 		t.Fatalf("runner code must always pass through configured auth boolean")
 	}
 }

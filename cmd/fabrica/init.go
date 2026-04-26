@@ -56,24 +56,26 @@ type initOptions struct {
 // It contains all project metadata and feature flags needed to generate
 // initial files (main.go, go.mod, README, etc.) with appropriate settings.
 type templateData struct {
-	ProjectName       string
-	ModulePath        string
-	Description       string
-	WithAuth          bool
-	WithStorage       bool
-	WithMetrics       bool
-	WithVersion       bool
-	WithReconcile     bool
-	WithEvents        bool
-	StorageType       string
-	DBDriver          string
-	EventBusType      string
-	ReconcileWorkers  int
-	FabricaVersion    string
-	TokenSmithVersion string
-	GeneratedAt       string
-	CopyrightYear     int
-	FeaturesText      string
+	ProjectName          string
+	ModulePath           string
+	Description          string
+	WithAuth             bool
+	WithStorage          bool
+	WithMetrics          bool
+	WithVersion          bool
+	WithReconcile        bool
+	WithEvents           bool
+	StorageType          string
+	DBDriver             string
+	EventBusType         string
+	ReconcileWorkers     int
+	FabricaVersion       string
+	GoVersion            string
+	TokenSmithModulePath string
+	TokenSmithVersion    string
+	GeneratedAt          string
+	CopyrightYear        int
+	FeaturesText         string
 }
 
 // newInitCommand creates the 'fabrica init' cobra command.
@@ -390,7 +392,7 @@ func runInit(projectName string, opts *initOptions) error {
 }
 
 // createProjectStructure creates the directory tree and files for a new project.
-// It generates main.go, go.mod, README.md, .gitignore, and stub storage files
+// It generates main.go, runtime helper files, go.mod, README.md, .gitignore, and stub storage files
 // from embedded templates, and writes both .fabrica.yaml and apis.yaml configs.
 //
 // The function creates:
@@ -410,27 +412,33 @@ func createProjectStructure(targetDir, projectName string, opts *initOptions) er
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 
 	// Template data
 	data := templateData{
-		ProjectName:       projectName,
-		ModulePath:        opts.modulePath,
-		Description:       opts.description,
-		WithAuth:          opts.withAuth,
-		WithStorage:       opts.withStorage,
-		WithMetrics:       opts.withMetrics,
-		WithVersion:       opts.withVersion,
-		WithReconcile:     opts.withReconcile,
-		WithEvents:        opts.withEvents,
-		StorageType:       opts.storageType,
-		DBDriver:          dbDriver,
-		EventBusType:      opts.eventBusType,
-		ReconcileWorkers:  opts.reconcileWorkers,
-		FabricaVersion:    version,
-		TokenSmithVersion: constants.TokenSmithVersion,
-		GeneratedAt:       time.Now().Format(time.RFC3339),
-		CopyrightYear:     time.Now().Year(),
-		FeaturesText:      "", // Will be populated later
+		ProjectName:          projectName,
+		ModulePath:           opts.modulePath,
+		Description:          opts.description,
+		WithAuth:             opts.withAuth,
+		WithStorage:          opts.withStorage,
+		WithMetrics:          opts.withMetrics,
+		WithVersion:          opts.withVersion,
+		WithReconcile:        opts.withReconcile,
+		WithEvents:           opts.withEvents,
+		StorageType:          opts.storageType,
+		DBDriver:             dbDriver,
+		EventBusType:         opts.eventBusType,
+		ReconcileWorkers:     opts.reconcileWorkers,
+		FabricaVersion:       version,
+		GoVersion:            "1.21",
+		TokenSmithModulePath: constants.TokenSmithModulePath,
+		TokenSmithVersion:    constants.TokenSmithVersion,
+		GeneratedAt:          now.Format(time.RFC3339),
+		CopyrightYear:        now.Year(),
+		FeaturesText:         "", // Will be populated later
+	}
+	if opts.withAuth {
+		data.GoVersion = constants.TokenSmithGoVersion
 	}
 
 	// Generate features text
@@ -456,6 +464,21 @@ func createProjectStructure(targetDir, projectName string, opts *initOptions) er
 
 	// Generate main.go from template
 	if err := generateFromTemplate("init/main.go.tmpl", filepath.Join(targetDir, "cmd/server/main.go"), data); err != nil {
+		return err
+	}
+
+	// Generate runtime helpers from template
+	if err := generateFromTemplate("init/runtime_helpers.go.tmpl", filepath.Join(targetDir, "cmd/server/runtime_helpers_generated.go"), data); err != nil {
+		return err
+	}
+
+	// Generate auth helpers from template
+	if err := generateFromTemplate("init/auth_helpers.go.tmpl", filepath.Join(targetDir, "cmd/server/auth_helpers_generated.go"), data); err != nil {
+		return err
+	}
+
+	// Generate metrics helpers from template
+	if err := generateFromTemplate("init/metrics_helpers.go.tmpl", filepath.Join(targetDir, "cmd/server/metrics_helpers_generated.go"), data); err != nil {
 		return err
 	}
 
@@ -624,6 +647,15 @@ func createFabricaConfig(targetDir string, opts *initOptions) error {
 				WorkerCount:  opts.reconcileWorkers,
 				RequeueDelay: opts.reconcileRequeueMs,
 			},
+			Security: SecurityConfig{
+				AuthN: AuthNConfig{
+					Enabled: opts.withAuth,
+				},
+				AuthZ: AuthZConfig{
+					Enabled: false,
+					Mode:    SecurityModeEnforce,
+				},
+			},
 		},
 		Generation: GenerationConfig{
 			Handlers:       true,
@@ -682,6 +714,9 @@ func createStubStorage(targetDir string, data templateData) error {
 	switch data.StorageType {
 	case "file":
 		stubContent = `// Code generated by Fabrica. DO NOT EDIT manually.
+// SPDX-FileCopyrightText: Copyright © 2025-2026 OpenCHAMI a Series of LF Projects, LLC
+// SPDX-License-Identifier: MIT
+//
 // This is a stub file created during init to prevent import errors.
 // It will be replaced when you run 'fabrica generate --storage'
 
@@ -691,6 +726,9 @@ package storage
 `
 	case "ent":
 		stubContent = `// Code generated by Fabrica. DO NOT EDIT manually.
+// SPDX-FileCopyrightText: Copyright © 2025-2026 OpenCHAMI a Series of LF Projects, LLC
+// SPDX-License-Identifier: MIT
+//
 // This is a stub file created during init to prevent import errors.
 // It will be replaced when you run 'fabrica generate --storage'
 
@@ -705,6 +743,9 @@ package storage
 		}
 
 		entStubContent := `// Code generated by Fabrica. DO NOT EDIT manually.
+// SPDX-FileCopyrightText: Copyright © 2025-2026 OpenCHAMI a Series of LF Projects, LLC
+// SPDX-License-Identifier: MIT
+//
 // This is a stub file created during init to prevent import errors.
 // It will be replaced when Ent generates the real schema code.
 
@@ -723,6 +764,9 @@ package ent
 		}
 
 		migrateStubContent := `// Code generated by Fabrica. DO NOT EDIT manually.
+// SPDX-FileCopyrightText: Copyright © 2025-2026 OpenCHAMI a Series of LF Projects, LLC
+// SPDX-License-Identifier: MIT
+//
 // This is a stub file created during init to prevent import errors.
 // It will be replaced when Ent generates the real migration code.
 
@@ -744,6 +788,9 @@ package migrate
 			}
 
 			pkgStubContent := fmt.Sprintf(`// Code generated by Fabrica. DO NOT EDIT manually.
+// SPDX-FileCopyrightText: Copyright © 2025-2026 OpenCHAMI a Series of LF Projects, LLC
+// SPDX-License-Identifier: MIT
+//
 // This is a stub file created during init to prevent import errors.
 // It will be replaced when Ent generates the real schema code.
 

@@ -46,6 +46,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/openchami/fabrica/internal/constants"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
@@ -185,13 +186,36 @@ func (g *Generator) SetDBDriver(driver string) {
 	g.DBDriver = driver
 }
 
-// SetAuthEnabled sets authentication-related generation toggles.
-//
-// WithAuth is the legacy template toggle; SecurityAuthNEnabled is the
-// TokenSmith-first flag used by newer config plumbing. Keep them in sync.
+// SetAuthEnabled maps auth enablement onto all auth-related generator toggles.
+// This provides a stable API for callers and avoids direct mutation of config internals.
 func (g *Generator) SetAuthEnabled(enabled bool) {
 	g.Config.WithAuth = enabled
 	g.Config.SecurityAuthNEnabled = enabled
+}
+
+func (g *Generator) commonTemplateData(templateName string) map[string]interface{} {
+	now := time.Now().UTC()
+
+	return map[string]interface{}{
+		"Version":       g.Version,
+		"GeneratedAt":   now.Format(time.RFC3339),
+		"CopyrightYear": now.Year(),
+		"Template":      templateName,
+	}
+}
+
+func (g *Generator) mergeCommonTemplateData(templateName string, data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+
+	for key, value := range g.commonTemplateData(templateName) {
+		if _, exists := data[key]; !exists {
+			data[key] = value
+		}
+	}
+
+	return data
 }
 
 // templateData creates a standardized data structure for template execution
@@ -223,7 +247,7 @@ func (g *Generator) templateData(resource ResourceMetadata, templateName string)
 		uniqueImports = append(uniqueImports, Import{Path: path, Alias: alias})
 	}
 
-	return map[string]interface{}{
+	return g.mergeCommonTemplateData(templateName, map[string]interface{}{
 		"Name":                  resource.Name,
 		"PluralName":            resource.PluralName,
 		"Package":               resource.Package,
@@ -242,10 +266,7 @@ func (g *Generator) templateData(resource ResourceMetadata, templateName string)
 		"APIGroupVersion":       resource.APIGroupVersion,
 		"UniqueImports":         uniqueImports,
 		"ModulePath":            g.ModulePath,
-		"Version":               g.Version,
-		"GeneratedAt":           time.Now().Format(time.RFC3339),
-		"Template":              templateName,
-	}
+	})
 }
 
 // globalTemplateData creates template data for templates that process all resources at once
@@ -266,35 +287,30 @@ func (g *Generator) globalTemplateData(templateName string) map[string]interface
 		uniqueImports = append(uniqueImports, Import{Path: path, Alias: alias})
 	}
 
-	return map[string]interface{}{
-		"PackageName":   g.PackageName,
-		"ModulePath":    g.ModulePath,
-		"Resources":     g.Resources,
-		"UniqueImports": uniqueImports,
-		"ProjectName":   g.extractProjectName(),
-		"StorageType":   g.StorageType,
-		"DBDriver":      g.DBDriver,
-		"Config":        g.Config,
-		"WithAuth":      g.Config.WithAuth,
-		"Version":       g.Version,
-		"GeneratedAt":   time.Now().Format(time.RFC3339),
-		"Template":      templateName,
-	}
+	return g.mergeCommonTemplateData(templateName, map[string]interface{}{
+		"PackageName":          g.PackageName,
+		"ModulePath":           g.ModulePath,
+		"TokenSmithModulePath": constants.TokenSmithModulePath,
+		"Resources":            g.Resources,
+		"UniqueImports":        uniqueImports,
+		"ProjectName":          g.extractProjectName(),
+		"StorageType":          g.StorageType,
+		"DBDriver":             g.DBDriver,
+		"Config":               g.Config,
+		"WithAuth":             g.Config.WithAuth,
+	})
 }
 
 // middlewareData creates template data for middleware templates
 func (g *Generator) middlewareData(templateName string) map[string]interface{} {
-	return map[string]interface{}{
+	return g.mergeCommonTemplateData(templateName, map[string]interface{}{
 		"ValidationMode":    g.Config.ValidationMode,
 		"ValidationEnabled": g.Config.ValidationEnabled,
 		"ETagAlgorithm":     g.Config.ETagAlgorithm,
 		"VersionStrategy":   g.Config.VersionStrategy,
 		"EventBusType":      g.Config.EventBusType,
 		"EventsEnabled":     g.Config.EventsEnabled,
-		"Version":           g.Version,
-		"GeneratedAt":       time.Now().Format(time.RFC3339),
-		"Template":          templateName,
-	}
+	})
 }
 
 // RegisterResource adds a resource type for code generation
@@ -560,6 +576,12 @@ func (g *Generator) GenerateAll() error {
 		if err := g.GenerateRoutes(); err != nil {
 			return err
 		}
+		if err := g.GenerateAuthZClassifier(); err != nil {
+			return err
+		}
+		if err := g.GenerateAuthZStarterFiles(); err != nil {
+			return err
+		}
 		// Export/import commands only work with Ent storage (they use Ent-specific query methods)
 		if g.StorageType == "ent" {
 			if err := g.GenerateExportCommand(); err != nil {
@@ -769,6 +791,9 @@ func (g *Generator) LoadTemplates() error {
 		"import":                    "server/import.go.tmpl",
 		"authzClassifier":           "server/authz_classifier.go.tmpl",
 		"authzClassifierCreateOnce": "server/authz_classifier_create_once.go.tmpl",
+		"authzModel":                "authz/model.conf.tmpl",
+		"authzPolicy":               "authz/policy.csv.tmpl",
+		"authzGrouping":             "authz/grouping.csv.tmpl",
 
 		// Client templates
 		"client":       "client/client.go.tmpl",
@@ -1002,6 +1027,67 @@ func (g *Generator) GenerateRoutes() error {
 	return nil
 }
 
+// GenerateAuthZClassifier generates the default and user-editable AuthZ classifiers.
+func (g *Generator) GenerateAuthZClassifier() error {
+	if !g.Config.WithAuth {
+		return nil
+	}
+
+	fmt.Printf("🔐 Generating AuthZ classifier...\n")
+
+	generatedFilename := filepath.Join(g.OutputDir, "authz_classifier_generated.go")
+	if err := g.executeTemplate("authzClassifier", generatedFilename, g.globalTemplateData("server/authz_classifier.go.tmpl")); err != nil {
+		return fmt.Errorf("failed to generate authz classifier: %w", err)
+	}
+
+	createOnceFilename := filepath.Join(g.OutputDir, "authz_classifier.go")
+	if _, err := os.Stat(createOnceFilename); os.IsNotExist(err) {
+		if err := g.executeTemplate("authzClassifierCreateOnce", createOnceFilename, g.globalTemplateData("server/authz_classifier_create_once.go.tmpl")); err != nil {
+			return fmt.Errorf("failed to generate authz classifier stub: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to stat authz classifier stub: %w", err)
+	}
+
+	return nil
+}
+
+// GenerateAuthZStarterFiles generates starter Casbin artifacts for TokenSmith AuthZ.
+func (g *Generator) GenerateAuthZStarterFiles() error {
+	if !g.Config.WithAuth {
+		return nil
+	}
+
+	fmt.Printf("📜 Generating starter AuthZ policy files...\n")
+
+	authzDir := "authz"
+	if err := os.MkdirAll(authzDir, 0755); err != nil {
+		return fmt.Errorf("failed to create authz directory: %w", err)
+	}
+
+	files := []struct {
+		templateName string
+		templatePath string
+		outputPath   string
+	}{
+		{templateName: "authzModel", templatePath: "authz/model.conf.tmpl", outputPath: filepath.Join(authzDir, "model.conf")},
+		{templateName: "authzPolicy", templatePath: "authz/policy.csv.tmpl", outputPath: filepath.Join(authzDir, "policy.csv")},
+		{templateName: "authzGrouping", templatePath: "authz/grouping.csv.tmpl", outputPath: filepath.Join(authzDir, "grouping.csv")},
+	}
+
+	for _, file := range files {
+		if _, err := os.Stat(file.outputPath); os.IsNotExist(err) {
+			if err := g.executeTemplate(file.templateName, file.outputPath, g.globalTemplateData(file.templatePath)); err != nil {
+				return fmt.Errorf("failed to generate %s: %w", file.outputPath, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to stat %s: %w", file.outputPath, err)
+		}
+	}
+
+	return nil
+}
+
 // GenerateClientCmd generates a Cobra-based CLI client
 func (g *Generator) GenerateClientCmd() error {
 	fmt.Printf("⚡ Generating CLI client...\n")
@@ -1193,11 +1279,9 @@ func (g *Generator) executeTemplate(templateName, outputPath string, data interf
 
 	// If no data provided, create basic version data
 	if data == nil {
-		data = map[string]interface{}{
-			"Version":     g.Version,
-			"GeneratedAt": time.Now().Format(time.RFC3339),
-			"Template":    templateName,
-		}
+		data = g.commonTemplateData(templateName)
+	} else if dataMap, ok := data.(map[string]interface{}); ok {
+		data = g.mergeCommonTemplateData(templateName, dataMap)
 	}
 
 	var buf bytes.Buffer
@@ -1279,12 +1363,9 @@ func (g *Generator) GenerateAPIVersions() error {
 		})
 	}
 
-	dataMap := map[string]interface{}{
-		"Version":     g.Version,
-		"GeneratedAt": time.Now().Format(time.RFC3339),
-		"Template":    "apiversion/register.gotmpl",
-		"Groups":      groups,
-	}
+	dataMap := g.mergeCommonTemplateData("apiversion/register.gotmpl", map[string]interface{}{
+		"Groups": groups,
+	})
 
 	// Ensure output directory exists
 	outDir := filepath.Join("pkg", "apiversion")
@@ -1298,7 +1379,40 @@ func (g *Generator) GenerateAPIVersions() error {
 		return fmt.Errorf("failed to generate version registry: %w", err)
 	}
 
+	if err := ensureSPDXHeader(outputPath, "Copyright © 2025 OpenCHAMI a Series of LF Projects, LLC", "MIT"); err != nil {
+		return fmt.Errorf("failed to ensure SPDX header for version registry: %w", err)
+	}
+
 	return nil
+}
+
+func ensureSPDXHeader(path, copyright, license string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	content := string(b)
+	if strings.Contains(content, "PDX-License-Identifier:") {
+		return nil
+	}
+
+	insertAfter := "// Generated at:"
+	idx := strings.Index(content, insertAfter)
+	if idx == -1 {
+		return fmt.Errorf("generated header marker %q not found", insertAfter)
+	}
+
+	lineEnd := strings.Index(content[idx:], "\n")
+	if lineEnd == -1 {
+		return fmt.Errorf("generated header line ending not found")
+	}
+
+	insertPos := idx + lineEnd + 1
+	spdx := fmt.Sprintf("// SPDX-FileCopyrightText: %s\n// SPDX-License-Identifier: %s\n", copyright, license)
+	updated := content[:insertPos] + spdx + content[insertPos:]
+
+	return os.WriteFile(path, []byte(updated), 0644)
 }
 
 // formatJSONValue formats a value appropriately for JSON based on its type
