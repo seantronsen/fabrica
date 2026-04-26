@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-04-26
+
+### Changed
+- Lots of little bugfixes
+- Better re-generation capabilities
+- dev features to maintaining local-only devel services
+- Upgrade to go 1.26.2 to support the latest openapi generation
+- Reduce the complexity of main.go
+
+### Documentation
+- Updated install snippets, version examples, and documentation in README and guides for `v0.4.1`
+
 ## [v0.4.0] - 2026-02-05
 
 ### Added
@@ -275,7 +287,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Storage system architecture documentation
 - Getting started guide
 
-[Unreleased]: https://github.com/openchami/fabrica/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/openchami/fabrica/compare/v0.4.1...HEAD
+[v0.4.1]: https://github.com/openchami/fabrica/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/openchami/fabrica/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/openchami/fabrica/compare/v0.2.9...v0.3.1
 [v0.2.9]: https://github.com/openchami/fabrica/compare/v0.2.8...v0.2.9

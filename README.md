@@ -54,12 +54,12 @@ Fabrica is a powerful code generation tool that accelerates API development by t
 
 ## 📦 Installation
 
-### Latest Release (v0.4.0)
+### Latest Release (v0.4.1)
 
 **macOS/Linux:**
 ```bash
 # Direct download and install
-curl -L https://github.com/openchami/fabrica/releases/download/v0.4.0/fabrica-$(uname -s)-$(uname -m) -o fabrica
+curl -L https://github.com/openchami/fabrica/releases/download/v0.4.1/fabrica-$(uname -s)-$(uname -m) -o fabrica
 chmod +x fabrica
 sudo mv fabrica /usr/local/bin/
 
@@ -69,7 +69,7 @@ fabrica version
 
 **Using Go:**
 ```bash
-go install github.com/openchami/fabrica/cmd/fabrica@v0.4.0
+go install github.com/openchami/fabrica/cmd/fabrica@v0.4.1
 ```
 
 ### Development Version
@@ -292,7 +292,7 @@ We welcome contributions from the community! Here's how to get involved:
 
 ## 🏷️ Releases & Roadmap
 
-**Current Version:** [v0.4.0](https://github.com/openchami/fabrica/releases/tag/v0.4.0)
+**Current Version:** [v0.4.1](https://github.com/openchami/fabrica/releases/tag/v0.4.1)
 
 **📅 Recent Updates:**
 - ✅ Hub/Spoke API versioning with automatic conversion
